@@ -1,0 +1,548 @@
+---
+title: "Robinhood App Reviews"
+author: "Attila Serfozo"
+date: '2021-05-21 '
+output: 
+    html_document:
+        code_folding: hide
+        code_download: true
+---
+
+## 1. Introduction
+
+[Project GitHub repository](https://github.com/ASerfozo/Unstructured_Text_Analysis_in_R).
+
+### 1.1 The Robinhood story 
+[(link to article)](https://www.cnet.com/personal-finance/investing/robinhood-backlash-what-you-should-know-about-the-gamestop-stock-controversy/)
+
+The Financial Markets in the beginning of 2021 were loud of the stock trading application Robinhood. The company started its service in 2015 and got retail investors attention quickly by offering commission free, easy to use stock trading application. As a result, thousands of small, often inexperienced private investors flooded the trading platform in the hope of commission free easy enrichment. However all applications providing something free have their drawbacks. For some it can be the tons of annoying commercials, for other the limited functionality until you pay for the extra. In case of Robinhood the drawback neglected by many in the early days was that they are making money primarily by selling their users trading data to high frequency trading firms, hedge funds, therefore aid them to win even more on the market and catch trends earlier. This practice is called "payment for order flow" (PFOF), a commonly used method among brokerages.
+
+So what happened in 2021, why did Robinhood got into focus? The reason behind is almost unbelievable. In 2021 January something unexpected happened, what never happened before on Wall Street. Shares of an almost bankrupt video game retailer company - GameStop, ticker:GME - spiked after traders from a Reddit forum - named r/WallStreetBets - started buying GME shares in an insane amount pushing hedge funds into panic selling with huge losses. As GME was the most shorted stock on the market, the movement quickly resulted a [short squeeze](https://www.investopedia.com/terms/s/shortsqueeze.asp) by forcing many retail and non-retail investors closing their short positions. As a result, the stock skyrocketed even more creating a rolling process. What happened will go into history, the stock grew more than 2563% compared to the 18.84 USD December close price. The GME stock peaked at 483 USD in 2 weeks. But, what caused the end of the price movement became the topic for several weeks.
+
+In the event of the overheated GameStop price movement several hedge funds suffered serious losses, many of them were the clients of Robinhood. It was probably embarrassing for Robinhood, which users were responsible for buying most of the GME shares. On 28th of January during the huge volatility of markets, the Robinhood - along with its market maker partner Citadel - decided to restrict buying GameStop shares along with many other short squeezed stocks (e.g. AMC, Nokia, Blackberry) and only allow selling due to increased risk. This act resulted a massive price drop and an end of the movement causing serious losses of investors expecting further growth in the stock price. Due to Robinhood's part in the events it has been scrutinized by users, investors, regulators and lawmakers. The support of the company fell sharply achieving a 1 star reviews on every platform and resulting tons of lawsuits. It is still a question whether Robinhood truly halted buying opportunities to save their hedge fund clients or because of capital adequacy issues.
+
+### 1.2 The Project
+
+So in this project my goal is to show how the sentiment changed rapidly against Robinhood. To show this effect I analyze written Reviews of the application from Google Play Store using various Natural Language Processing tecniques. I will look for interesting patterns in the written reviews. Identify most used words before and after the GameStop events in context with Robinhood and analyse sentiments of reviews and try topic modeling.
+
+The dataset was downloaded from [Kaggle](https://www.kaggle.com/nguyenphd/robinhood-app-reviews-on-google-play-store) and contains the written reviews between Aug 13th 2015 and Apr 30th 2021. However it is important to highlight that according to many [articles](https://9to5google.com/2021/01/28/robinhood-android-review-bomb-gamestop/) more than 100,000 negative reviews have been removed by Google to bring back the overall rating of the application from 1 star to something more realistic. In the event of the scandal 100thousands of negative comments flooded the application review section, thus probably the reality can be even worse than the outcomes of this analysis.
+
+
+## 2. Data cleaning and transformation
+
+The dataset consited of 10 variables with 206 530 observations including dates, user information, content of the review, score, number of likes and reply details. During the cleaning and transformation process I transformed date variables to date format, dropped observations with missing written content and got rid of unnecessary variables like link of user image or user name. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# Import libraries --------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(tidytext)
+data("stop_words")
+library(topicmodels)
+
+library(ggplot2)
+library(wordcloud)  # Creating wordclouds
+library(igraph)     # Creating network charts
+library(ggraph)     # Creating network charts
+
+data <- read.csv("Robinhood_GooglePlay_Reviews_enUS.csv")
+
+# Data transformation -----------------------------------------------------
+
+data <- data %>% 
+  mutate_all(list(~na_if(.,""))) %>% 
+  arrange(at) %>% 
+  mutate(reviewId = 1:nrow(data),
+         date = as.Date(at),
+         reply_date = as.Date(repliedAt),
+         year = year(date),
+         month = month(date),
+         week = week(date),
+         day = day(date),
+         month_end = ceiling_date(date, 'month')-1) %>% 
+  select(-c('userImage',"userName","at", 'repliedAt')) %>% 
+  filter(content != is.na(content))
+
+```
+
+## 3. Exploratory Data Analysis
+
+On the chart below we can see the average monthly app rating of Robinhood on Google Play store. Before the covid-19 pandemic they performed well regarding monthly average being constantly rated above 4 stars. During the covid-19 outbreak the platformed suffered several server outages due to extreme load and it appeared to damage its reputation for a short period. During the pandemic times they managed to get rid of the permanent negative sentiment. Then hitten by the events of GameStop, it looks like it is harder for the company looks to get back the user trust. It will be very interesting to look back at the end of 2021 to see whether Robinhood managed to get back to positive ratings after 2021 events or not. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+# Exploratory Data Analysis -----------------------------------------------
+
+# skimr::skim(data)
+
+summary_stat <- data %>% group_by(month_end) %>% 
+  summarise(avg_score=mean(score),
+            nr_rating = n(),
+            nr_replies = sum(!is.na(replyContent)))
+
+ggplot( summary_stat, aes( x=month_end ) ) +
+  geom_line( aes( y = avg_score ) , color = 'red', size=1 ) +
+  annotate("text", x = ymd("2018-01-01"), y = 1.5, label = "Before Covid-19") +
+  annotate("rect", xmin = ymd("2015-08-01"), xmax = ymd("2020-03-01"), ymin = 0, ymax = 5,
+           alpha = .2, fill = "yellow" )+
+  annotate("text", x = ymd("2020-03-15"), y =1, label = "Robinhood outage", angle=90) +
+  annotate("rect", xmin = ymd("2020-03-01"), xmax = ymd("2020-04-01"), ymin = 0, ymax = 5,
+           alpha = .2, fill = "blue" )+
+  annotate("text", x = ymd("2020-08-01"), y = 1.5, label = "Pandemic") +
+  annotate("rect", xmin = ymd("2020-04-01"), xmax = ymd("2021-01-01"), ymin = 0, ymax = 5,
+           alpha = .2, fill = "green" )+
+  annotate("text", x = ymd("2021-02-01"), y = 0.7, label = "Gamestop", angle=90) +
+  annotate("rect", xmin = ymd("2021-01-01"), xmax = ymd("2021-03-01"), ymin = 0, ymax = 5,
+           alpha = .2, fill = "purple" )+
+  annotate("text", x = ymd("2021-04-01"), y = 1.5, label = "After Gamestop", angle=90) +
+  annotate("rect", xmin = ymd("2021-03-01"), xmax = ymd("2021-05-01"), ymin = 0, ymax = 5,
+           alpha = .2, fill = "orange" ) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title='Average monthly app rating', x = 'Date' , y = 'Rating' )+
+  theme_bw()
+
+```
+
+To see how serious the mishandling of GameStop impacted the company, it is interesting to have a look at the number of ratings by month chart and how frequently Robinhood replied to reviews. As we can see on the first one, in January the number of reviews rised significantly higher than ever before, even though Google deleted more than 100 000 reviews. On the other hand the replies of Robinhood dropped nearly by two-third, so they went to silence after the events. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, , fig.width = 12}
+
+ggplot(summary_stat, aes(x=month_end, y = nr_rating)) +
+  geom_line(color='navyblue', size=1) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title='Number of ratings by month', x='Date', y='Number of Ratings') +
+  theme_bw()
+
+ggplot(summary_stat, aes(x=month_end, y = nr_replies)) +
+  geom_line(color='navyblue', size=1) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title='Number of replies by month', x='Date', y='Number of replies') +
+  theme_bw()
+
+```
+
+On the chart below we can see the january ratings of Robinhood and how the ratings dropped down after the 27th day of the month.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+# Create before and after Gamestop dataset --------------------------------
+
+jan_ratings <- data %>% filter(date>='2021-01-01',
+                            date< '2021-02-01')%>% 
+  group_by(day) %>% 
+  summarise(avg_score=mean(score))
+
+# The Robinhood - Gamestop scandal erupted on 28 of January 2021
+ggplot(jan_ratings, aes(x=day, y = avg_score)) +
+  geom_line(color='navyblue', size=1) +
+  labs(title='Average ratings in January', x='Days', y='Rating') +
+  theme_bw()
+
+data <- data %>% mutate(period = ifelse(date <'2021-01-28','before', 'after'))
+
+```
+
+## 4. Word frequencies
+
+One of the most interesting part of analysing the changing of attitude towards the application is to see what were the most frequently used words in the review section. Not only it can be interesting to see connections, but we can see some quite funny top used words as well.
+
+### 4.1 Top 20 words
+
+So as part of this project, I checked the 20 most frequent words in the application reviews excluding all the stop words like "a, the, about, of, after", etc.. We can see below that the most used words were simple words probably could appear with good probability in almost all of the reviews. These words include 'app', 'market', 'stocks', 'money', 'Robinhood', 'trading'. However looking more deeply at the words we can spot that before the scandal there were more positivity - e.g. easy, love, free, simple, awesome - compared to the after GME words from where these words disappeared.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+# Unnest tokens -----------------------------------------------------------
+
+# Use unnest tokens to get words
+tidy_df <- data %>% mutate(id = rownames(data)) %>% 
+  unnest_tokens(word,content)
+
+
+# Remove stop words -------------------------------------------------------
+
+tidy_df <- tidy_df %>%
+  anti_join(stop_words)
+
+# Word frequency ----------------------------------------------------------
+tidy_df %>% 
+  count(period, word, sort=TRUE) %>% 
+  group_by(period) %>% 
+  top_n(20,n) %>%  
+  ggplot(aes(reorder_within(word, n, period),n))  + 
+  geom_col(show.legend = F, fill = 'navyblue') + 
+  facet_wrap(~factor(period,levels=c('before','after')), scales = 'free') +
+  scale_x_reordered() +
+  coord_flip() + 
+  theme_bw() + 
+  xlab('') +
+  labs(title='20 Most frequent words before and after the GameStop events')
+
+```
+
+### 4.2 Frequency of words
+
+To show a better visualization of the used words the next charts show the distribution of words on a scatterplot based on their proportion of the total number of words typed into the reviews. We can spot, that before the GME event more user talked about the app and how easy it is to use. They talked about stocks, the market, money or how they love the app. To make it easier to see the words at the crowded section I excluded words with proportion less than 0.0015 on both axis. On the next chart we zoom in to see better.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+# Difference between before and after Gamestop
+frequency <- 
+  tidy_df %>% 
+  count(period, word) %>% 
+  group_by(period) %>% 
+  mutate(proportion = n/sum(n)) %>% select(-c(n)) %>% 
+  pivot_wider(names_from = period, values_from = proportion) %>% 
+  filter(before > 0.0015 | after > 0.0015)
+
+ggplot(frequency,aes(x=before, y = after)) + 
+  geom_point( fill = 'lightseagreen', color='lightseagreen', size = 2, alpha=0.5) + 
+  geom_text(aes(label = word), hjust = -0.2, size = 3, alpha=0.7) + 
+  geom_abline(intercept = 0, slope = 1) +
+  theme_bw() +
+  labs(title='Distribution of proportion of words before and after the GME events') 
+
+```
+
+Looking closer at the word distributions we can spot more interesting patterns like the increased mentioning of hedge funds and manipulation after the 28th of January and can see less people talking about the advantages of the Robinhood application. Also negative words appear like "terrible, trash, horrible, garbage, illegal, scam", etc..
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+# Looking closer
+ggplot(frequency,aes(x=before, y = after)) + 
+  geom_point( fill = 'lightseagreen', color='lightseagreen', size = 2, alpha=0.5) + 
+  geom_text(aes(label = word), hjust = -0.2, size = 3, alpha=0.7) + 
+  geom_abline(intercept = 0, slope = 1) +
+  scale_x_continuous(limits = c(0,0.01)) +
+  scale_y_continuous(limits = c(0,0.01)) +
+  theme_bw() +
+  labs(title='Distribution of proportion of words before and after the GME events') 
+
+```
+
+### 4.3 Term frequency and Inverse document frequency (tf-idf)
+
+Until this time we only looked at the words excluding only stop words. The tf-idf method introduce a more efficient approach taking into account not only the frequency of words, but also how commonly are they used. The approach decreases the weight for commonly used words, therefore we can get more valuable outputs.
+
+The top 10 words can be found below using the tf-idf approach. Now we can see that common words (app, market, money, stocks, etc..) without important information have been put on the sideline.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+# tf-idf ------------------------------------------------------------------
+
+tf_idf_words <- tidy_df %>% 
+  count(period, word, sort = T) %>% 
+  ungroup() %>%
+  bind_tf_idf(word,period,n) %>% 
+  arrange(desc(tf_idf))
+
+# Remove special characters or broken words
+tf_idf_words <- tf_idf_words %>% 
+  filter(word != 'ů',word != 'á',word != '9.00',word != 'dob',word != 'đť',
+         word != 'ř',word != 'áµ',word != 'đź‘ťđź‘ťđź‘ťđź‘ť ')
+
+tf_idf_words %>% 
+  group_by(period) %>% 
+  top_n(10,tf_idf) %>%  
+  ggplot(aes(reorder_within(word, n, period),n))  + 
+  geom_col(show.legend = F, fill = 'navyblue') + 
+  facet_wrap(~factor(period,levels=c('before','after')), scales = 'free') +
+  scale_x_reordered() +
+  coord_flip() + 
+  theme_bw() + 
+  xlab('') +
+  labs(title='10 Most frequent words before and after the GameStop events in the tf-idf method')
+
+```
+
+To see more than 10 words in a nice visual way, I created a wordcloud to provide more insight. Following the basics of wordclouds, the larger the words, the more frequently it is used. The first wordcloud shows the most frequent words before the GME events and the second the ones after it.
+
+#### Most frequently used words before the Gamestop events
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+wordcloud(words=filter(tf_idf_words,period=='before')$word, freq=filter(tf_idf_words,period=='before')$tf_idf,
+          scale=c(4,0.7), max.words = 200, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(5,"Dark2"))
+
+```
+
+#### Most frequently used words after the Gamestop events
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+wordcloud(words=filter(tf_idf_words,period=='after')$word, freq=filter(tf_idf_words,period=='after')$tf_idf,
+          scale=c(5,1), max.words = 200, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(5,"Dark2"))
+
+```
+
+### 4.4 Pair of words (N-grams/bigrams)
+
+To look further, I also had a look at the most frequent word pairs in the reviews to see whether we can see some more interesting patterns with this approach. For word pairs I used the function called n-grams to have a look into consecutive words, how often word X is followed by word Y. We can see below that before 28th of January most frequently users wrote about how they love the app, in contrary after the 28th market manipulation got into focus.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+bigram_df <- data %>% 
+  unnest_tokens(bigram,content, token = 'ngrams', n = 2)
+
+bigram_td_idf <- bigram_df %>% 
+  count(period,bigram, sort =T) %>%
+  bind_tf_idf(bigram, period, n) %>%
+  arrange(desc(tf_idf)) %>% 
+  separate(bigram,c('word1', 'word2'), sep=  ' ') %>% 
+  filter(
+    !word1 %in% stop_words$word ,
+    !word2 %in% stop_words$word) %>% 
+  unite(col = 'bigram',word1:word2, sep =' ' ) %>% 
+  group_by(period) 
+
+bigram_td_idf %>% 
+  top_n(10,tf_idf) %>% 
+  ggplot(aes(reorder_within(bigram, n, period),n))  + 
+  geom_col(show.legend = F, fill = 'navyblue') + 
+  facet_wrap(~factor(period,levels=c('before','after')), scales = 'free') +
+  scale_x_reordered() +
+  coord_flip() + 
+  theme_bw() + 
+  xlab('') +
+  labs(title='10 Most frequent word pairs before and after the GameStop events')
+
+```
+
+### 4.5 Showing network of words with ggraph
+
+Using the ggraph r package we can have a look at the network connection of consecutive words. The graphs are showing words with more than 200 mentioning for before and 300 mentioning after the events of GME. Similarly to the previous approaches words before are way more positive than after 28th of January.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, , fig.width = 12, fig.height=10}
+
+# Visualizing network of bigrams with ggraph
+
+bigram_counts <- data %>%
+  unnest_tokens(bigram,content, token = 'ngrams', n = 2) %>% 
+  separate(bigram,c('word1', 'word2'), sep=  ' ') %>% 
+  filter(
+    !word1 %in% stop_words$word ,
+    !word2 %in% stop_words$word,
+    word1 != is.na(word1)) %>% 
+  count(period, word1, word2, sort = T )
+
+bigram_graph_before <- bigram_counts %>% 
+  filter(period=='before') %>% 
+  select(from = word1, to = word2, n) %>% 
+  filter(n > 200) %>% 
+  graph_from_data_frame()
+
+bigram_graph_after <- bigram_counts %>% 
+  filter(period=='after') %>% 
+select(from = word1, to = word2, n) %>% 
+  filter(n > 299) %>% 
+  graph_from_data_frame()
+
+
+set.seed(20210522)
+a<- grid::arrow(type = 'closed', length = unit(.15, 'inches'))
+
+ggraph(bigram_graph_before, layout = 'fr') +
+  geom_edge_link(aes(edge_alpha = n), show.legend = F, 
+                 arrow= a, end_cap = circle(.07,'inches')) +
+  geom_node_point(color = 'lightblue', size = 5) + 
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  labs(title="Most frequent consecutive words before GME") +
+  theme_void()
+
+ggraph(bigram_graph_after, layout = 'fr') +
+  geom_edge_link(aes(edge_alpha = n), show.legend = F, 
+                 arrow= a, end_cap = circle(.07,'inches')) +
+  geom_node_point(color = 'lightblue', size = 5) + 
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  labs(title="Most frequent consecutive words before GME") +
+  theme_void()
+
+```
+
+## 5. Sentiment
+
+Another interesting aspect of text analysis can be the sentiment of written text. In the next exercise I will check the sentiment of the reviews using different packages, including basic libraries AFINN, Bing et al., NRC and the financial words package Loughran and McDonald. 
+
+### 5.1 Sentiment during time
+As we can see below on the first chart until the end of 2020, Robinhood was only hit with negativity during the covid-19 breakout when they had three server outages.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+# Check Sentiment ------------------------------------------------
+
+afinn <- tidy_df %>% 
+  inner_join(get_sentiments('afinn')) %>% 
+  group_by(month_end) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = 'AFINN')
+
+bing_nrc_and_loughran <- bind_rows(tidy_df %>% 
+                                     inner_join(get_sentiments("bing")) %>% 
+                                     mutate(method = "Bing et al."),
+                                     tidy_df %>% 
+                                     inner_join(get_sentiments("nrc") %>% 
+                                                  filter(sentiment %in% c("positive",
+                                                                          "negative"))) %>% 
+                                     mutate(method = "NRC"),
+                                     tidy_df %>% 
+                                     inner_join(get_sentiments("loughran") %>% 
+                                                  filter(sentiment %in% c("positive",
+                                                                          "negative"))) %>% 
+                                     mutate(method = "Loughran and McDonald")) %>% 
+  count(method, month_end, sentiment) %>% 
+  spread(sentiment,n,fill=0) %>% 
+  mutate(sentiment=positive-negative)
+
+
+bind_rows(filter(afinn, month_end<'2021-01-01'),
+          filter(bing_nrc_and_loughran, month_end<'2021-01-01')) %>% 
+  ggplot(aes(month_end,sentiment,fill=method))+
+  geom_col(show.legend = FALSE)+
+  facet_wrap(~method, ncol=1, scales="free_y") +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title="Positivity of Robinhood reviews until the end of 2020", x="Date", y="Positivity") +
+  theme_bw()
+
+```
+
+However if we are looking at their whole carrier, including the year 2021 we can see how extreme the reviews went because of the GameStop events. The sentiment hit an extreme negativity regardless which sentiment package are we considering. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+bind_rows(afinn,
+          bing_nrc_and_loughran) %>% 
+  ggplot(aes(month_end,sentiment,fill=method))+
+  geom_col(show.legend = FALSE)+
+  facet_wrap(~method, ncol=1, scales="free_y") +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title="Positivity of Robinhood reviews until end of April 2021", x="Date", y="Positivity") +
+  theme_bw()
+
+```
+
+### 5.2 Loughran and McDonald words
+
+The most effective sentiment package in our case is probably the Loughran and McDonald, which can take into account the positivity of financial words. Below we can see the top10 words in each category of the Loughran and McDonald package taking into account the whole timeline of Robinhood.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12, fig.height=8}
+
+# Loughran words ----------------------------------------------------------
+
+loughran_words <- tidy_df %>% 
+  count(word, sort=TRUE) %>% 
+  inner_join(get_sentiments('loughran')) %>% 
+  group_by(sentiment) %>% 
+  top_n(10, n) %>% 
+  ungroup() %>% 
+  mutate(word = reorder(word,n))
+
+ggplot(loughran_words, aes(x=word, y=n)) + 
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~ sentiment, scales = 'free') +
+  labs(title="Loughran and McDonalds sentiment categories top 10 words") +
+  theme_bw()
+
+```
+
+If we have a look at the changing of positivity across time according to the Loughran and McDonald package, we can spot that the shape is very similar to what we have seen at the beginning on the monthly ratings chart.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+# Positivity according to Loughran and McDonald sentiment during time
+
+loughran_period <- tidy_df %>% 
+  inner_join(get_sentiments('loughran')) %>% 
+  count(sentiment, period) %>% 
+  spread(sentiment, n, fill = 0)
+
+loughran_date <- tidy_df %>% 
+  inner_join(get_sentiments('loughran')) %>% 
+  count(sentiment, month_end) %>% 
+  spread(sentiment, n, fill = 0)
+
+loughran_date %>% 
+  mutate(score = (positive-negative) / (positive + negative)) %>% 
+  ggplot(aes(x=month_end, y=score)) +
+  geom_line(color='navyblue', size=1) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year") +
+  labs(title='Positivity of Robinhood reviews (monthly)', x='Date', y='Positivity score of reviews') +
+  theme_bw()
+
+```
+
+## 6. Topic modelling
+
+Finally let's have a look at topic modeling. From the written reviews my goal is to create a 2 clusters topic analysis. Hopefully the results will tell us whether based on the words of a user we can predict whether the review was written before or after the Gamestop events. So using the topicmodel package LDA function I created a 2 topics clustering. Below we can see what were the 15 most important words by topic. We can already notice for the first look that there are many common words in the two topics according to LDA.  
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+tf_idf_id <- tidy_df %>% 
+  count(id, period, word, sort = T) %>% 
+  ungroup() %>%
+  bind_tf_idf(word,id,n) %>% 
+  arrange(desc(tf_idf))
+
+tf_idf_filtered <- tf_idf_id %>% filter(tf_idf > median(tf_idf_id$tf_idf))
+
+tf_idf_dtm <- tf_idf_filtered %>% 
+  unite(document, period, id) %>% 
+  count(document, word) %>% 
+  cast_dtm(document, word, n)
+
+tf_idf_lda <- LDA(tf_idf_dtm, k = 2, control = list(seed = 20210523))
+
+tf_idf_lda %>% tidy(matrix="beta") %>% 
+  group_by(topic) %>% 
+  top_n(15, beta) %>% 
+  ungroup() %>% 
+  arrange(topic, -beta) %>% 
+  mutate(term = reorder(term,beta)) %>% 
+  ggplot(aes(term,beta,fill = factor(topic)))+geom_col(show.legend = F) + 
+  facet_wrap(~topic, scales = 'free') + 
+  coord_flip() +
+  labs(title="Top words of topics") +
+  theme_bw()
+
+```
+
+As an alternative way to separate the two topics easier we can look at the words with the greatest difference in beta between topic 1 and 2. To do this I created a log ratio of the two betas with log2(ß1/ß2). Below we can see the top 20 greatest difference words. It is still not easy to distinguish the topics, but topic 2 (colored blue) seems to be more negative and more about the scandal of GME, while topic 1 (colored red) seems more like a description of the app.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+tf_idf_lda %>% tidy(matrix="beta") %>% 
+  mutate(topic = paste0("topic", topic)) %>% 
+  spread(topic, beta) %>% 
+  filter(topic1 > .001 | topic2 > .001) %>% 
+  mutate(log_ratio = log2(topic2 / topic1)) %>% 
+  top_n(20,abs(log_ratio)) %>% 
+  mutate(term = reorder(term,log_ratio) ) %>% 
+  ggplot(aes(term, log_ratio, fill = log_ratio > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title="Words with largest beta difference") +
+  theme_bw()
+
+```
+
+Finally, looking at the boxplots we can see that  we cannot pair the two topics to the Robinhood periods. So using only the vocabulary of reviews is not enough by itself to help us identify whether a review was written before or after the 28th of January. A possible explanation to this can be what we have seen already on the ratings chart. After the GameStop event the number of positive reviews started to increase again in March and April, so probably the attitude against the company will come back to normal after some time passes similarly to what happened after the drop of sentiment in case of the server outages in 2020. As a result the positive words appear after the scandal as well and it makes topic segmentation harder for us.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width = 12}
+
+tf_idf_lda %>% 
+  tidy(matrix = 'gamma') %>% 
+  separate(document, c('period', 'id'), sep = '_') %>% 
+  mutate(top_critic = reorder(period, gamma * topic)) %>% 
+  ggplot(aes(factor(topic), gamma)) + 
+  geom_boxplot() + 
+  facet_wrap(~factor(period,levels=c('before','after')), scales = 'free') +
+  labs(title="Distribution of gamma for each topic within the period") +
+  theme_bw()
+
+```
+
+## 7. Conclusion
+
+In this project I tried to show how the sentiment changed against Robinhood due to the story of GameStop. To achieve my goal, I used several R packages capable of natural text analysis. I found interesting relationship in the words used before and after the 28th of January, also we were able to see that after the GME event happened, tons of negativity flooded their Google Play Store review section. The sentiment of the reviews have also confirmed what the word frequencies told us and all the 4 sentiment packages marked an extreme value of negativity in the review section. 
+Finally, we had a look at topic modeling whether it can tell a review was written before or after the GME scandal without knowing the date of the review. Although, it turned out that we cannot distinguish the two period by only taking into account the vocabulary, it can still bring us an interesting conclusion. There is a possibility that after some time passes the attitude against the company will return to its normal state similarly to the past.
